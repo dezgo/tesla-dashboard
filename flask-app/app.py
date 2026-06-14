@@ -56,6 +56,22 @@ CHARGES_SQL = text("""
     LIMIT :limit
 """)
 
+# Battery health: project each charge's end state to a full pack.
+# Filter to charges that finished above a sensible SOC — projecting a 100%
+# range from a 12% reading amplifies noise badly. Same idea as TeslaMate's
+# Battery Health dashboard.
+DEGRADATION_SQL = text("""
+    SELECT
+        end_date,
+        end_battery_level,
+        end_rated_range_km
+    FROM charging_processes
+    WHERE end_battery_level >= :min_soc
+      AND end_rated_range_km IS NOT NULL
+      AND end_battery_level > 0
+    ORDER BY end_date ASC
+""")
+
 
 def _drive_to_dict(row):
     rated_used = None
@@ -122,6 +138,28 @@ def api_efficiency():
         if d["efficiency_wh_per_km"] is not None
     ]
     points.reverse()  # chronological
+    return jsonify(points)
+
+
+@app.get("/api/degradation")
+def api_degradation():
+    """Projected full-pack rated range over time → the degradation curve.
+
+    Each point is one charge's range extrapolated to 100% SOC. New-car
+    baseline for a Model Y is ~455 km rated; `pct_of_new` shows health.
+    """
+    new_car_range_km = 455
+    with engine.connect() as conn:
+        rows = conn.execute(DEGRADATION_SQL, {"min_soc": 50}).fetchall()
+    points = []
+    for r in rows:
+        projected = round(r.end_rated_range_km * 100 / r.end_battery_level, 1)
+        points.append({
+            "x": r.end_date.isoformat() if r.end_date else None,
+            "y": projected,
+            "soc": r.end_battery_level,
+            "pct_of_new": round(projected / new_car_range_km * 100, 1),
+        })
     return jsonify(points)
 
 
