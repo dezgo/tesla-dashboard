@@ -1,0 +1,34 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# --- TeslaMate UI: no built-in auth, so protect it with basic auth ---
+{$TESLAMATE_HOST} {
+	# Tesla Fleet API public-key hosting (only needed if you send commands).
+	# Drop your public key at ./well-known/appspecific/com.tesla.3p.public-key.pem
+	# and it is served unauthenticated at the required path.
+	handle /.well-known/appspecific/com.tesla.3p.public-key.pem {
+		root * /srv/well-known
+		file_server
+	}
+
+	handle {
+		basic_auth {
+			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+		}
+		reverse_proxy teslamate:4000
+	}
+}
+
+# --- Grafana: has its own login, so no extra basic auth ---
+{$GRAFANA_HOST} {
+	reverse_proxy grafana:3000
+}
+
+# --- Your Flask dashboard ---
+{$DASH_HOST} {
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+	reverse_proxy flask:8000
+}

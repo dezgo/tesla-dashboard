@@ -1,0 +1,108 @@
+name: tesla-dashboard
+
+services:
+  # ---- Postgres: shared DB for TeslaMate + your Flask app (read-only role) ----
+  database:
+    image: postgres:17
+    restart: always
+    environment:
+      POSTGRES_USER: ${TM_DB_USER}
+      POSTGRES_PASSWORD: ${TM_DB_PASS}
+      POSTGRES_DB: ${TM_DB_NAME}
+      # consumed by the init script below to create the read-only Flask role
+      FLASK_DB_PASSWORD: ${FLASK_DB_PASS}
+    volumes:
+      - tm_db:/var/lib/postgresql/data
+      - ./postgres/init-readonly.sh:/docker-entrypoint-initdb.d/10-init-readonly.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TM_DB_USER} -d ${TM_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- TeslaMate: polls the Tesla Fleet API and writes to Postgres ----
+  teslamate:
+    image: teslamate/teslamate:latest
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      ENCRYPTION_KEY: ${TM_ENCRYPTION_KEY}
+      DATABASE_USER: ${TM_DB_USER}
+      DATABASE_PASS: ${TM_DB_PASS}
+      DATABASE_NAME: ${TM_DB_NAME}
+      DATABASE_HOST: database
+      MQTT_HOST: mosquitto
+      # Tell TeslaMate it's served over TLS at this host (cookies, redirects)
+      VIRTUAL_HOST: ${TESLAMATE_HOST}
+      CHECK_ORIGIN: "true"
+      TZ: ${TZ}
+    cap_drop: [all]
+
+  # ---- Grafana: TeslaMate ships ~15 prebuilt dashboards ----
+  grafana:
+    image: teslamate/grafana:latest
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      DATABASE_USER: ${TM_DB_USER}
+      DATABASE_PASS: ${TM_DB_PASS}
+      DATABASE_NAME: ${TM_DB_NAME}
+      DATABASE_HOST: database
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASS}
+      GF_SERVER_ROOT_URL: https://${GRAFANA_HOST}
+      GF_SERVER_DOMAIN: ${GRAFANA_HOST}
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  # ---- MQTT broker TeslaMate publishes live state to ----
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: always
+    command: mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+
+  # ---- Your custom Flask app: reads the same DB, read-only ----
+  flask:
+    build: ./flask-app
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://flask_ro:${FLASK_DB_PASS}@database:5432/${TM_DB_NAME}
+      TZ: ${TZ}
+
+  # ---- Caddy: automatic HTTPS + basic auth in front of everything ----
+  caddy:
+    image: caddy:2
+    restart: always
+    depends_on: [teslamate, grafana, flask]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TESLAMATE_HOST: ${TESLAMATE_HOST}
+      GRAFANA_HOST: ${GRAFANA_HOST}
+      DASH_HOST: ${DASH_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./well-known:/srv/well-known:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  tm_db:
+  grafana_data:
+  mosquitto_data:
+  caddy_data:
+  caddy_config:

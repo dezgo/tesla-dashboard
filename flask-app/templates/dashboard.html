@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Y · Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: system-ui, sans-serif; margin: 0; background:#0f1115; color:#e6e6e6; }
+    header { padding: 24px 28px; border-bottom: 1px solid #222; }
+    h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    main { padding: 28px; max-width: 980px; margin: 0 auto; }
+    .card { background:#171a21; border:1px solid #222; border-radius:14px; padding:20px; margin-bottom:24px; }
+    .card h2 { margin:0 0 14px; font-size:14px; text-transform:uppercase; letter-spacing:.05em; color:#9aa0aa; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #222; }
+    th { color:#9aa0aa; font-weight:500; }
+    td.num { text-align:right; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header><h1>🚗 Model Y · personal telemetry</h1></header>
+  <main>
+    <div class="card">
+      <h2>Efficiency trend (Wh/km, lower is better)</h2>
+      <canvas id="effChart" height="120"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>Last 10 drives</h2>
+      <table id="drivesTable">
+        <thead>
+          <tr><th>Start</th><th class="num">km</th><th class="num">min</th>
+              <th class="num">km/h</th><th class="num">Wh/km</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const fmt = iso => iso ? luxon.DateTime.fromISO(iso).toFormat("dd LLL HH:mm") : "—";
+
+    async function loadDrives() {
+      const rows = await (await fetch("/api/drives")).json();
+      const tbody = document.querySelector("#drivesTable tbody");
+      tbody.innerHTML = rows.map(d => `
+        <tr>
+          <td>${fmt(d.start)}</td>
+          <td class="num">${d.distance_km ?? "—"}</td>
+          <td class="num">${d.duration_min ?? "—"}</td>
+          <td class="num">${d.avg_speed_kmh ?? "—"}</td>
+          <td class="num">${d.efficiency_wh_per_km ?? "—"}</td>
+        </tr>`).join("");
+    }
+
+    async function loadChart() {
+      const points = await (await fetch("/api/efficiency")).json();
+      new Chart(document.getElementById("effChart"), {
+        type: "line",
+        data: { datasets: [{
+          label: "Wh/km", data: points,
+          borderColor: "#4f9dff", backgroundColor: "rgba(79,157,255,.15)",
+          tension: .25, pointRadius: 2, fill: true,
+        }]},
+        options: {
+          scales: { x: { type: "time", time: { unit: "day" }, grid:{color:"#222"} },
+                    y: { grid:{color:"#222"} } },
+          plugins: { legend: { display: false } },
+        },
+      });
+    }
+
+    loadDrives();
+    loadChart();
+  </script>
+</body>
+</html>
