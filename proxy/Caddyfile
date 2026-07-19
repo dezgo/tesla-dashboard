@@ -1,0 +1,7 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# One file per site in ./sites/. Keeping them separate means adding or removing
+# a site never risks a typo taking down the others.
+import /etc/caddy/sites/*.caddy

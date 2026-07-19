@@ -1,0 +1,20 @@
+# Tesla Model Y dashboard (the Flask app in ../../flask-app).
+# `tesla-flask` is the network alias set on the flask service in
+# ../../docker-compose.yml — not a hostname, and not the service name, which
+# would collide once another stack also has a service called `flask`.
+{$DASH_HOST} {
+	# Tesla Fleet API public-key hosting (only needed if you send commands).
+	# Drop your public key at ../well-known/appspecific/com.tesla.3p.public-key.pem
+	# and it is served unauthenticated at the required path.
+	handle /.well-known/appspecific/com.tesla.3p.public-key.pem {
+		root * /srv/well-known
+		file_server
+	}
+
+	handle {
+		basic_auth {
+			{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+		}
+		reverse_proxy tesla-flask:8000
+	}
+}

@@ -1,8 +1,7 @@
 # Tesla Model Y telemetry stack
 
 TeslaMate (data + Grafana) on the `ai` server (SSD Nodes, 208.87.135.58), plus a
-custom Flask app reading the same Postgres DB **read-only**. Caddy fronts the one
-public hostname with automatic HTTPS and basic auth.
+custom Flask app reading the same Postgres DB **read-only**.
 
 ```
 tesla.appfoundry.cc  -> your Flask dashboard (public, basic auth)
@@ -10,6 +9,20 @@ tesla.appfoundry.cc  -> your Flask dashboard (public, basic auth)
 localhost:4000       -> TeslaMate UI  (SSH tunnel only, not published)
 localhost:3000       -> Grafana       (SSH tunnel only, not published)
 ```
+
+### Two stacks, on purpose
+| | |
+|---|---|
+| `docker-compose.yml` | the car stack — Postgres, TeslaMate, Grafana, Mosquitto, Flask. Binds **no** public ports. |
+| `proxy/` | the **shared** edge proxy. Caddy, TLS, basic auth. The only thing on 80/443. |
+
+They meet on an external Docker network called `web`. The split exists because
+this box is expected to host other sites later: they each join `web` and drop a
+file in `proxy/sites/`, rather than being bolted into the car stack. Taking the
+dashboard down for maintenance then can't take an unrelated site with it.
+
+`proxy/` isn't tesla-specific and should probably become its own repo once a
+second site exists.
 
 Only the dashboard is on the internet. TeslaMate's UI is mostly a one-time thing
 (authorizing the car), and Grafana is for you, so neither needs a public
@@ -32,20 +45,27 @@ cert. Wait for it to resolve before starting the stack.
 - Docker + the compose plugin are already installed on `ai`.
 
 ## 3. Configure
+Two stacks, two env files:
+
 ```bash
-cp .env.example .env
-# fill in strong passwords. Then generate the two computed values:
+cp .env.example .env              # app stack: DB passwords, encryption key
+cp proxy/.env.example proxy/.env  # edge proxy: hostnames, basic auth, ACME
 
 openssl rand -base64 32                                            # -> TM_ENCRYPTION_KEY
 docker run --rm caddy caddy hash-password --plaintext 'yourpass'   # -> BASIC_AUTH_HASH
 ```
-Put the bcrypt hash in `.env` as-is. (In `docker-compose`/Caddy env, a literal
-`$` in the hash is fine because it's passed through, not shell-expanded.)
+Put the bcrypt hash in `proxy/.env` as-is. (In `docker-compose`/Caddy env, a
+literal `$` in the hash is fine because it's passed through, not shell-expanded.)
 
 ## 4. Launch
+The shared network has to exist before either stack starts:
+
 ```bash
-docker compose up -d
-docker compose logs -f caddy      # watch certs get issued
+docker network create web         # once per box
+
+docker compose up -d              # app stack (db, teslamate, grafana, flask)
+docker compose -f proxy/docker-compose.yml up -d
+docker compose -f proxy/docker-compose.yml logs -f caddy   # watch certs issue
 ```
 
 ## 5. Connect the car
@@ -63,15 +83,25 @@ the Tesla **Fleet API**. Drive around for a day or two, then:
 ### Optional: sending commands (not just reading)
 Newer cars need signed commands via Tesla's Vehicle Command protocol. If you go
 there, drop your public key at
-`well-known/appspecific/com.tesla.3p.public-key.pem` — Caddy already serves it at
-the path Tesla expects, unauthenticated.
+`proxy/well-known/appspecific/com.tesla.3p.public-key.pem` — Caddy already serves
+it at the path Tesla expects, unauthenticated.
+
+## Adding another site later
+1. Give the app service `networks: [web]` and a unique alias (service names like
+   `flask` collide once two stacks share the network — that's what the
+   `tesla-flask` alias is for).
+2. Add its hostname + `reverse_proxy <alias>:<port>` in `proxy/sites/<name>.caddy`.
+3. `docker compose -f proxy/docker-compose.yml restart caddy`.
 
 ## Security notes
 - Flask connects as `flask_ro`, a SELECT-only role — an app bug can't corrupt
   TeslaMate's data.
-- Postgres and MQTT are **not** published to the host; only Caddy's 80/443 are
-  exposed. Keep it that way.
-- `.env` and the `.pem` are gitignored. Never commit them.
+- Postgres, MQTT, TeslaMate and Grafana are **not** reachable from the internet;
+  only the proxy's 80/443 are. Keep it that way.
+- `.env`, `proxy/.env` and the `.pem` are gitignored. Never commit them —
+  **this repo is public.**
+- `caddy_data` holds the issued certs. Deleting that volume means re-issuing,
+  and Let's Encrypt rate-limits (5 duplicate certs/week).
 
 ## Extending the Flask app
 `flask-app/app.py` has the DB wiring plus `/api/drives`, `/api/charges`,

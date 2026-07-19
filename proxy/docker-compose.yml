@@ -1,0 +1,48 @@
+name: proxy
+
+# Shared edge proxy for the `ai` box. This is the ONLY thing that binds 80/443.
+# Every app stack (tesla-dashboard, and whatever comes next) stays off those
+# ports and instead joins the external `web` network, where Caddy reaches it by
+# network alias.
+#
+# This lives here for now because tesla-dashboard is the first site, but it is
+# NOT tesla-specific — when the second site lands it should probably graduate to
+# its own repo.
+#
+# First-time setup on a new box:
+#   docker network create web
+#
+# Adding a site later:
+#   1. give the app service `networks: [web]` + a unique alias
+#   2. drop a ./sites/<name>.caddy file with its hostname + reverse_proxy
+#   3. docker compose -p proxy restart caddy
+
+services:
+  caddy:
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      # Site-specific values. As sites accumulate this will grow; that is fine,
+      # it keeps every secret in one .env rather than scattered per-site.
+      DASH_HOST: ${DASH_HOST}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - ./well-known:/srv/well-known:ro
+      - caddy_data:/data       # certs live here — do not delete casually
+      - caddy_config:/config
+    networks: [web]
+
+networks:
+  web:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:

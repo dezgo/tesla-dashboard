@@ -1,2 +1,4 @@
 .env
+proxy/.env
 well-known/*.pem
+proxy/well-known/*.pem

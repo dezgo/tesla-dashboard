@@ -76,6 +76,8 @@ services:
       - mosquitto_data:/mosquitto/data
 
   # ---- Your custom Flask app: reads the same DB, read-only ----
+  # The only service the edge proxy can see. It publishes no ports; the proxy
+  # in ../proxy reaches it over the shared `web` network by its alias.
   flask:
     build: ./flask-app
     restart: always
@@ -85,29 +87,20 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://flask_ro:${FLASK_DB_PASS}@database:5432/${TM_DB_NAME}
       TZ: ${TZ}
+    networks:
+      default:      # keep talking to `database` on this stack's own network
+      web:
+        aliases:
+          - tesla-flask   # referenced by ../proxy/sites/tesla.caddy
 
-  # ---- Caddy: automatic HTTPS + basic auth in front of everything ----
-  caddy:
-    image: caddy:2
-    restart: always
-    depends_on: [teslamate, grafana, flask]
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DASH_HOST: ${DASH_HOST}
-      ACME_EMAIL: ${ACME_EMAIL}
-      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
-      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./well-known:/srv/well-known:ro
-      - caddy_data:/data
-      - caddy_config:/config
+# TLS termination and ports 80/443 belong to the shared proxy — see ../proxy.
+# Nothing in this stack binds a public port, so bringing the car dashboard down
+# never takes another site with it.
+networks:
+  web:
+    external: true
 
 volumes:
   tm_db:
   grafana_data:
   mosquitto_data:
-  caddy_data:
-  caddy_config:
