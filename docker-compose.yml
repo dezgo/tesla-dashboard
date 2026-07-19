@@ -34,10 +34,14 @@ services:
       DATABASE_NAME: ${TM_DB_NAME}
       DATABASE_HOST: database
       MQTT_HOST: mosquitto
-      # Tell TeslaMate it's served over TLS at this host (cookies, redirects)
-      VIRTUAL_HOST: ${TESLAMATE_HOST}
-      CHECK_ORIGIN: "true"
+      # Not published to the internet — reached over an SSH tunnel on
+      # localhost:4000. CHECK_ORIGIN must be false: with it on, TeslaMate
+      # rejects the tunnelled request because the Origin is localhost.
+      CHECK_ORIGIN: "false"
       TZ: ${TZ}
+    # Bound to loopback only: `ssh -L 4000:localhost:4000 ai` to reach it.
+    ports:
+      - "127.0.0.1:4000:4000"
     cap_drop: [all]
 
   # ---- Grafana: TeslaMate ships ~15 prebuilt dashboards ----
@@ -54,8 +58,11 @@ services:
       DATABASE_HOST: database
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASS}
-      GF_SERVER_ROOT_URL: https://${GRAFANA_HOST}
-      GF_SERVER_DOMAIN: ${GRAFANA_HOST}
+      # Reached over an SSH tunnel, not a public hostname.
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    # Bound to loopback only: `ssh -L 3000:localhost:3000 ai` to reach it.
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
 
@@ -88,8 +95,6 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      TESLAMATE_HOST: ${TESLAMATE_HOST}
-      GRAFANA_HOST: ${GRAFANA_HOST}
       DASH_HOST: ${DASH_HOST}
       ACME_EMAIL: ${ACME_EMAIL}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER}

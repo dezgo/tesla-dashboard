@@ -1,23 +1,35 @@
 # Tesla Model Y telemetry stack
 
-TeslaMate (data + Grafana) on your DigitalOcean droplet, plus a custom Flask app
-reading the same Postgres DB **read-only**. Everything sits behind Caddy with
-automatic HTTPS and basic auth.
+TeslaMate (data + Grafana) on the `ai` server (SSD Nodes, 208.87.135.58), plus a
+custom Flask app reading the same Postgres DB **read-only**. Caddy fronts the one
+public hostname with automatic HTTPS and basic auth.
 
 ```
-tesla.appfoundry.cc    -> TeslaMate UI   (basic auth)
-grafana.appfoundry.cc  -> Grafana        (Grafana's own login)
-dash.appfoundry.cc     -> your Flask app (basic auth)
+tesla.appfoundry.cc  -> your Flask dashboard (public, basic auth)
+
+localhost:4000       -> TeslaMate UI  (SSH tunnel only, not published)
+localhost:3000       -> Grafana       (SSH tunnel only, not published)
+```
+
+Only the dashboard is on the internet. TeslaMate's UI is mostly a one-time thing
+(authorizing the car), and Grafana is for you, so neither needs a public
+hostname — both bind to loopback and you tunnel in:
+
+```bash
+ssh -L 4000:localhost:4000 ai     # then open http://localhost:4000
+ssh -L 3000:localhost:3000 ai     # then open http://localhost:3000
 ```
 
 ## 1. DNS
-Add three A-records pointing at the droplet's public IP:
-`tesla`, `grafana`, `dash` → `<droplet-ip>`. Wait for them to resolve before
-starting Caddy (it needs them live to issue certs).
+One A-record: `tesla` → `208.87.135.58`, in Cloudflare.
 
-## 2. Droplet prep
-- Open firewall ports 80 and 443.
-- Install Docker + the compose plugin.
+**Set it to DNS-only (grey cloud), not proxied.** With the orange cloud on,
+Cloudflare intercepts the ACME HTTP-01 challenge and Caddy can never issue a
+cert. Wait for it to resolve before starting the stack.
+
+## 2. Server prep
+- Open firewall ports 80 and 443 (`sudo ufw allow 80,443/tcp`).
+- Docker + the compose plugin are already installed on `ai`.
 
 ## 3. Configure
 ```bash
@@ -37,10 +49,16 @@ docker compose logs -f caddy      # watch certs get issued
 ```
 
 ## 5. Connect the car
-Open `https://tesla.appfoundry.cc`, sign in, and follow TeslaMate's flow to
-authorize against the Tesla **Fleet API**. Drive around for a day or two, then:
-- Grafana → the bundled dashboards light up.
-- `https://dash.appfoundry.cc` → your Flask efficiency chart + last-10-drives.
+TeslaMate's UI isn't public, so tunnel to it:
+
+```bash
+ssh -L 4000:localhost:4000 ai
+```
+
+Open `http://localhost:4000`, and follow TeslaMate's flow to authorize against
+the Tesla **Fleet API**. Drive around for a day or two, then:
+- `https://tesla.appfoundry.cc` → your Flask efficiency chart + last-10-drives.
+- Grafana (tunnel to :3000) → the bundled dashboards light up.
 
 ### Optional: sending commands (not just reading)
 Newer cars need signed commands via Tesla's Vehicle Command protocol. If you go
@@ -56,7 +74,11 @@ the path Tesla expects, unauthenticated.
 - `.env` and the `.pem` are gitignored. Never commit them.
 
 ## Extending the Flask app
-`flask-app/app.py` has the DB wiring + three endpoints. Good next builds:
-battery-degradation curve from `charging_processes`, a "where did my range go?"
-analyzer joining `positions` with temperature, or a tax logbook that classifies
-drives by `start_address`/`end_address`.
+`flask-app/app.py` has the DB wiring plus `/api/drives`, `/api/charges`,
+`/api/efficiency` and `/api/degradation`. Note that `/api/charges` and
+`/api/degradation` return data but nothing on the dashboard renders them yet —
+the degradation chart is the obvious next build.
+
+After that: a "where did my range go?" analyzer joining `positions` with
+temperature, or a tax logbook that classifies drives by
+`start_address`/`end_address`.
