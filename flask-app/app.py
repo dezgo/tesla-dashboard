@@ -1,4 +1,4 @@
-"""
+r"""
 Starter Flask app on top of TeslaMate's Postgres DB (read-only).
 
 Two ideas to grow from here:

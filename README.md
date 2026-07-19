@@ -54,8 +54,15 @@ cp proxy/.env.example proxy/.env  # edge proxy: hostnames, basic auth, ACME
 openssl rand -base64 32                                            # -> TM_ENCRYPTION_KEY
 docker run --rm caddy caddy hash-password --plaintext 'yourpass'   # -> BASIC_AUTH_HASH
 ```
-Put the bcrypt hash in `proxy/.env` as-is. (In `docker-compose`/Caddy env, a
-literal `$` in the hash is fine because it's passed through, not shell-expanded.)
+**Double every `$` in the bcrypt hash** when putting it in `proxy/.env`
+(`$2a$14$abc…` → `$$2a$$14$$abc…`). Compose interpolates `$` in `.env` values,
+so a hash pasted verbatim reaches Caddy truncated at the first `$`, and basic
+auth then rejects every password without logging anything useful. Check it with:
+
+```bash
+docker compose -f proxy/docker-compose.yml run --rm --no-deps \
+  --entrypoint sh caddy -c 'printenv BASIC_AUTH_HASH'
+```
 
 ## 4. Launch
 The shared network has to exist before either stack starts:
